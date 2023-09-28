@@ -16,6 +16,8 @@ class GroceryList extends StatefulWidget {
 
 class _GroceryListState extends State<GroceryList> {
   List<GroceryItem> _groceryItems = [];
+  var _isLoading = true;
+  String? _error;
 
   @override
   void initState() {
@@ -29,28 +31,50 @@ class _GroceryListState extends State<GroceryList> {
       'shopping-list.json',
     );
 
-    final response = await http.get(url);
-    final Map<String, dynamic> listData =
-        json.decode(response.body);
-    final List<GroceryItem> loadedItems = [];
+    try {
+      final response = await http.get(url);
 
-    for (final item in listData.entries) {
-      final category = categories.entries.firstWhere(
-          (category) => category.value.title == item.value['category']).value;
+      if (response.statusCode >= 400) {
+        setState(() {
+          _error = 'Failed to fetch data. Please try again later';
+        });
+      }
 
-      loadedItems.add(
-        GroceryItem(
-          id: item.key,
-          name: item.value['name'],
-          quantity: item.value['quantity'],
-          category: category,
-        ),
-      );
+      if (response.body == 'null') {
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final Map<String, dynamic> listData = json.decode(response.body);
+      final List<GroceryItem> loadedItems = [];
+
+      for (final item in listData.entries) {
+        final category = categories.entries
+            .firstWhere(
+                (category) => category.value.title == item.value['category'])
+            .value;
+
+        loadedItems.add(
+          GroceryItem(
+            id: item.key,
+            name: item.value['name'],
+            quantity: item.value['quantity'],
+            category: category,
+          ),
+        );
+      }
+
+      setState(() {
+        _groceryItems = loadedItems;
+        _isLoading = false;
+      });
+    } catch (err) {
+      setState(() {
+        _error = 'Something went wrong! Please try again later.';
+      });
     }
-
-    setState(() {
-      _groceryItems = loadedItems;
-    });
   }
 
   void _addItem() async {
@@ -60,14 +84,47 @@ class _GroceryListState extends State<GroceryList> {
       ),
     );
 
-    debugPrint('Go back...');
-    _loadItems();
+    if (newItem == null) {
+      return;
+    }
+
+    setState(() {
+      _groceryItems.add(newItem);
+    });
   }
 
-  void _removeItem(GroceryItem item) {
+  void _removeItem(GroceryItem item) async {
+    final index = _groceryItems.indexOf(item);
+
     setState(() {
       _groceryItems.remove(item);
     });
+
+    final url = Uri.https(
+      'flutter-shopping-d8ea4-default-rtdb.firebaseio.com',
+      'shopping-list/${item.id}.json',
+    );
+
+    final response = await http.delete(url);
+
+    // Get item back when API call got failed
+    if (response.statusCode >= 400) {
+      // Optional: Show Error message
+      _showSnackbar('Network error! Cannot delete item.');
+      setState(() {
+        _groceryItems.insert(index, item);
+      });
+    }
+  }
+
+  void _showSnackbar(String message) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 3),
+        content: Text(message),
+      ),
+    );
   }
 
   @override
@@ -80,8 +137,18 @@ class _GroceryListState extends State<GroceryList> {
         },
         key: ValueKey(_groceryItems[index].id),
         background: Container(
-            color: Colors.red.withOpacity(0.75),
-            margin: const EdgeInsets.symmetric(horizontal: 16)),
+          color: Colors.red.withOpacity(0.75),
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Icon(Icons.delete),
+              SizedBox(width: 8),
+              Text('Delete'),
+              SizedBox(width: 16),
+            ],
+          ),
+        ),
         child: ListTile(
           title: Text(_groceryItems[index].name),
           leading: Container(
@@ -101,6 +168,16 @@ class _GroceryListState extends State<GroceryList> {
           children: [Text('No items added yet.')],
         ),
       );
+    }
+
+    if (_isLoading) {
+      content = const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    if (_error != null) {
+      content = Center(child: Text(_error!));
     }
 
     return Scaffold(
